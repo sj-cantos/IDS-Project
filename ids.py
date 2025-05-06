@@ -154,12 +154,12 @@ def launch_attack(target_ip="192.168.18.3"):
 
 def main():
     # Configuration
-    #make your own folder for cfm_path, input_folder and output_folder and replace it with your own path
-    cfm_path = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\CICFlowMeter-4.0\bin\cfm.bat"
-    input_folder = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\pcap_store"
-    output_folder = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\output"
+    #make your own folder for cfm, input_folder and output_folder and replace it with your own path
+    cfm_path = r"D:\IDS-Project\CICFlowMeter-4.0\bin\cfm.bat"
+    input_folder = r"D:\IDS-Project\pcap_store"
+    output_folder = r"D:\IDS-Project\output"
     interface = "Wi-Fi"
-    capture_duration = 60  # seconds
+    capture_duration = 10  # seconds
     target_ip = "192.168.18.3"  # Change to your target IP
 
     # Create directories if they don't exist
@@ -201,7 +201,7 @@ def main():
 
     # Step 4: Predict anomalies
     result_df = predict_anomalies(latest_csv)
-    
+    print(result_df)
     if result_df is not None:
         # Verify attack detection
         output_csv = latest_csv.replace(".csv", "_with_predictions.csv")
