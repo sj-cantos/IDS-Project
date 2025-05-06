@@ -154,6 +154,7 @@ def launch_attack(target_ip="192.168.18.3"):
 
 def main():
     # Configuration
+    #make your own folder for cfm_path, input_folder and output_folder and replace it with your own path
     cfm_path = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\CICFlowMeter-4.0\bin\cfm.bat"
     input_folder = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\pcap_store"
     output_folder = r"D:\Real-Time-Feature-Extraction-of-Packets-using-CICFLOWMETER\output"
