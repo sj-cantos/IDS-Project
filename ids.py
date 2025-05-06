@@ -8,7 +8,7 @@ import numpy as np
 import joblib
 from scapy.all import *
 import threading
-from col import column_rename_map as columns
+from cols import column_rename_map as columns
 def capture_pcap(interface, capture_duration, output_pcap):
     """Capture network packets from a specific interface for a given duration."""
     try:
