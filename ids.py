@@ -72,12 +72,6 @@ def predict_anomalies(csv_path, model_path="random_forest_ids_model.pkl", encode
 
         # Rename columns
         df.rename(columns=columns, inplace=True)
-        
-        # Fill missing features with 0
-        for feature in expected_features:
-            if feature not in df.columns:
-                print(f"[!] Adding missing feature: {feature}")
-                df[feature] = 0
 
         # Keep only expected features in correct order
         df = df[expected_features]
@@ -183,25 +177,20 @@ def main():
     if not run_cfm(cfm_path, output_pcap, output_folder):
         print("[!] CICFlowMeter failed. Exiting.")
         return
-    if not verify_capture(output_pcap):
-        return
+    
+    verify_capture(output_pcap)
+     
 
     # Step 3: Find the generated CSV file
     csv_files = [f for f in os.listdir(output_folder) 
                 if f.startswith(os.path.basename(output_pcap)) and f.endswith(".csv")]
-    
-    if not csv_files:
-        print("[!] No CSV file generated. Possible issues:")
-        print("- CICFlowMeter didn't process the PCAP correctly")
-        print("- No network traffic was captured")
-        return
 
     latest_csv = os.path.join(output_folder, csv_files[0])
     print(f"[+] Using CSV file: {latest_csv}")
 
     # Step 4: Predict anomalies
     result_df = predict_anomalies(latest_csv)
-    print(result_df)
+
     if result_df is not None:
         # Verify attack detection
         output_csv = latest_csv.replace(".csv", "_with_predictions.csv")
