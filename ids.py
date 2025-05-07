@@ -54,37 +54,63 @@ def run_cfm(cfm_path, input_file, output_folder):
         print(f"[!] An error occurred while running CICFlowMeter: {e}")
         return False
 
-def predict_anomalies(csv_path, model_path="random_forest_ids_model.pkl", encoder_path="label_encoder.pkl"):
-    """Predict anomalies in a new CICFlowMeter CSV file using a trained RandomForest model."""
+import pandas as pd
+import joblib
+import xgboost as xgb
+
+import pandas as pd
+import joblib
+import xgboost as xgb
+import numpy as np
+
+class_id_to_label = {
+    0: "BENIGN",
+    1: "Bot",
+    2: 'DDoS',
+    3: 'DoS GoldenEye',
+    4: 'DoS Hulk',
+    5: 'DoS Slowhttptest',
+    6: 'DoS slowloris',
+    7: 'FTP-Patator',
+    8: 'Heartbleed',
+    9: 'Infiltration',
+    10: 'PortScan',
+    11: 'SSH-Patator',
+    12: 'Web Attack - Brute Force',
+    13: 'Web Attack - Sql Injection',
+    14: 'Web Attack - XSS',   
+}
+def predict_anomalies(csv_path, model_path="xgb_ids_model.json"):
     try:
-        print("[+] Loading model and label encoder...")
-        model = joblib.load(model_path)
-        label_encoder = joblib.load(encoder_path)
+        print(f"[+] Using CSV file: {csv_path}")
+        print("[+] Loading XGBoost model...")
+        model = xgb.Booster()
+        model.load_model(model_path)
 
         print("[+] Reading input CSV...")
         df = pd.read_csv(csv_path)
         df_original = df.copy()
 
-        # Get expected features from the model
-        expected_features = model.feature_names_in_
-        print(f"[+] Model expects {len(expected_features)} features")
-        
-
-        # Rename columns
+        # Drop non-numeric columns
+        non_numeric_cols = ['Flow ID', 'Src IP', 'Dst IP', 'Timestamp', 'Label', 'Src Port', 'Dst Port',]
+        df = df.drop(columns=[col for col in non_numeric_cols if col in df.columns])
         df.rename(columns=columns, inplace=True)
+        print(f"[+] Model expects {df.shape[1]} features")
 
-        # Keep only expected features in correct order
-        df = df[expected_features]
-        
+        # Ensure all columns are numeric
+        df = df.apply(pd.to_numeric, errors='coerce')
+        df = df.fillna(0)
+
         print(f"[+] Predicting on {df.shape[0]} records...")
-        predictions = model.predict(df)
-        predicted_labels = label_encoder.inverse_transform(predictions)
+        dmatrix = xgb.DMatrix(df)
+        preds = model.predict(dmatrix)
+        predicted_classes = [class_id_to_label.get(int(x), "Unknown") for x in np.argmax(preds, axis=1)]
 
-        df_original['Prediction'] = predicted_labels
+        df_original['Prediction'] = predicted_classes
         output_path = csv_path.replace(".csv", "_with_predictions.csv")
         df_original.to_csv(output_path, index=False)
-        print(f"[+] Predictions saved to {output_path}")
 
+        print(f"[+] Predictions saved to {output_path}")
         print("\n[+] Prediction Summary:")
         print(df_original['Prediction'].value_counts())
 
@@ -93,6 +119,8 @@ def predict_anomalies(csv_path, model_path="random_forest_ids_model.pkl", encode
     except Exception as e:
         print(f"[!] Error during prediction: {e}")
         return None
+
+
 def verify_capture(pcap_file, expected_syn=1000, expected_udp=500):
     """Verify attack packets were actually captured"""
     try:
