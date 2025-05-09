@@ -9,6 +9,16 @@ import joblib
 from scapy.all import *
 import threading
 from cols import column_rename_map as columns
+
+#CONSTANTS
+INTERFACE = "Wi-Fi"  # Change to your network interface name
+TARGET_IP = "192.168.18.3" # Change to your target IP
+CAPTURE_DURATION = 10  # seconds
+#Create your own directories for each paths on the root folder
+OUTPUT_PATH = r"D:\IDS-Project\output"  # Change to your output folder path
+CFM_PATH = r"D:\IDS-Project\CICFlowMeter-4.0\bin\cfm.bat"  # Change to your CICFlowMeter path
+INPUT_PATH = r"D:\IDS-Project\pcap_store"  # Change to your input folder path
+
 def capture_pcap(interface, capture_duration, output_pcap):
     """Capture network packets from a specific interface for a given duration."""
     try:
@@ -178,13 +188,13 @@ def launch_attack(target_ip="192.168.18.3"):
 def main():
     # Configuration
     #make your own folder for cfm, input_folder and output_folder and replace it with your own path
-    cfm_path = r"D:\IDS-Project\CICFlowMeter-4.0\bin\cfm.bat"
-    input_folder = r"D:\IDS-Project\pcap_store"
-    output_folder = r"D:\IDS-Project\output"
+    cfm_path = CFM_PATH
+    input_folder = INPUT_PATH
+    output_folder = OUTPUT_PATH
     #Change to preferred interface name
-    interface = "Wi-Fi"
-    capture_duration = 10  # seconds
-    target_ip = "192.168.18.3"  # Change to your target IP
+    interface = INTERFACE
+    capture_duration = CAPTURE_DURATION  # seconds
+    target_ip = TARGET_IP  # Change to your target IP
 
     # Create directories if they don't exist
     os.makedirs(input_folder, exist_ok=True)
