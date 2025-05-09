@@ -22,7 +22,8 @@ def capture_pcap(interface, capture_duration, output_pcap):
         return False
 
 def run_cfm(cfm_path, input_file, output_folder):
-    """Run CICFlowMeter on the given .pcap file to generate flow statistics."""
+    """Run CICFlowMeter on the given .pcap file to generate flow statistics. 
+    Note: This function assumes that the CICFlowMeter is unzipped and the path to the executable is correct."""
     try:
         print(f"[+] Running CICFlowMeter on {input_file}...")
         original_working_dir = os.getcwd()
@@ -180,6 +181,7 @@ def main():
     cfm_path = r"D:\IDS-Project\CICFlowMeter-4.0\bin\cfm.bat"
     input_folder = r"D:\IDS-Project\pcap_store"
     output_folder = r"D:\IDS-Project\output"
+    #Change to preferred interface name
     interface = "Wi-Fi"
     capture_duration = 10  # seconds
     target_ip = "192.168.18.3"  # Change to your target IP
