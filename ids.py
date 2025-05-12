@@ -163,7 +163,7 @@ def run_cfm(cfm_path, input_file, output_folder):
     except Exception as e:
         print(f"[!] Error running CICFlowMeter: {e}")
         return False
-def predict_anomalies(csv_path, model_path="xgb_ids_model_balanced (2).json"):
+def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_v3.json"):
     try:
         print(f"[+] Loading data from: {csv_path}")
         df = pd.read_csv(csv_path)
