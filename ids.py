@@ -42,10 +42,6 @@ class_id_to_label = {
     14: 'Web Attack - XSS',
 }
 
-# Feature column mapping (update with your actual column names)
-
-with open("training_features.json") as f:
-    EXPECTED_FEATURES = json.load(f)
 
 def is_admin():
     try:

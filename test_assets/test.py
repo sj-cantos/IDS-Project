@@ -14,12 +14,20 @@ from scapy.layers.dns import DNS, DNSQR, DNSRR
 import os
 import pandas as pd
  # Import your existing function
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cols import column_rename_map
 from ids import class_id_to_label
+import os
+import json
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FEATURES_PATH = r"D:\IDS-Project\training_features.json"
 # Configuration
-TEST_CSV = r"D:\IDS-Project\output\ten_malicious_rows.csv"  # Your test CSV path
-OUTPUT_CSV = r"D:\IDS-Project\output\test_output.csv"  # Results path
-def predict_anomalies(csv_path, model_path="xgb_ids_model_balanced (2).json"):
+TEST_CSV = r"D:\IDS-Project\test_assets\ten_malicious_rows.csv"  
+OUTPUT_CSV = r"D:\IDS-Project\test_assets\test_output.csv"  
+def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_balanced (2).json"):
     try:
         print(f"[+] Loading data from: {csv_path}")
         df = pd.read_csv(csv_path)
@@ -47,8 +55,9 @@ def predict_anomalies(csv_path, model_path="xgb_ids_model_balanced (2).json"):
             df['short_flow'] = (df['Flow Duration'] < 0.1).astype(int)  # Flows < 100ms
         
         # Align features with model expectations
-        with open("training_features.json") as f:
+        with open(FEATURES_PATH) as f:
             expected_features = json.load(f)
+
         for feature in expected_features:
             if feature not in df.columns:
                 df[feature] = 0
