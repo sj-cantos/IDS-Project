@@ -18,7 +18,7 @@ from cols import column_rename_map
 # CONSTANTS
 INTERFACE = "Ethernet 3"  # Change to your network interface
 TARGET_IP = "192.168.18.56"  # Change to your target IP
-CAPTURE_DURATION = 15  # seconds
+CAPTURE_DURATION = 60  # seconds
 OUTPUT_PATH = r"D:\IDS-Project\output"
 CFM_PATH = r"D:\IDS-Project\CICFlowMeter-4.0\bin\cfm.bat"
 INPUT_PATH = r"D:\IDS-Project\pcap_store"
@@ -167,7 +167,7 @@ def run_cfm(cfm_path, input_file, output_folder):
     except Exception as e:
         print(f"[!] Error running CICFlowMeter: {e}")
         return False
-def predict_anomalies(csv_path, model_path="xgb_ids_model_v2.json"):
+def predict_anomalies(csv_path, model_path="xgb_ids_model_balanced (2).json"):
     try:
         print(f"[+] Loading data from: {csv_path}")
         df = pd.read_csv(csv_path)
@@ -176,17 +176,24 @@ def predict_anomalies(csv_path, model_path="xgb_ids_model_v2.json"):
         df = df.rename(columns=column_rename_map)
         df_original = df.copy()
 
-        # Preprocessing steps
-        non_numeric_cols = ['flow_id', 'src_ip', 'dst_ip', 'timestamp', 'label', 'src_port', 'dst_port']
-        df = df.drop(columns=[col for col in non_numeric_cols if col in df.columns])
-        
+        # Preprocessing steps - only drop columns that exist
+        # Drop non-numeric and unwanted columns
+        non_numeric_cols = ['Flow ID', 'Source IP', 'Destination IP', 'Timestamp', 'Label', 'Source Port', 'Destination Port']
+        df = df.drop(columns=[col for col in non_numeric_cols if col in df.columns], errors='ignore')
+
+        # Drop columns by index only if the indices exist in df
+        columns_to_drop = [0, 14, 15, 36, 67]
+        existing_indices = [i for i in columns_to_drop if i < df.shape[1]]
+        df = df.drop(df.columns[existing_indices], axis=1)
+
+       
         # Clean and normalize features
         df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
         if 'Flow Duration' in df.columns:
             df['Flow Duration'] = df['Flow Duration'].replace(0, 1) / 1e6  # Convert to seconds
             
         # Add SYN flood detection features
-        if 'SYN Flag Count' in df.columns and 'total_fwd_packets' in df.columns:
+        if all(col in df.columns for col in ['SYN Flag Count', 'Total Fwd Packets']):
             df['syn_ratio'] = df['SYN Flag Count'] / (df['Total Fwd Packets'] + 1e-5)
             df['short_flow'] = (df['Flow Duration'] < 0.1).astype(int)  # Flows < 100ms
         
@@ -197,15 +204,16 @@ def predict_anomalies(csv_path, model_path="xgb_ids_model_v2.json"):
             if feature not in df.columns:
                 df[feature] = 0
         df = df[expected_features]
-
+       
         # Load model and predict
         print("[+] Loading XGBoost model...")
         model = xgb.Booster()
         model.load_model(model_path)
         dmatrix = xgb.DMatrix(df)
-        
+        print(dmatrix.feature_names)
         # Get prediction probabilities
         pred_probs = model.predict(dmatrix)
+        print(pred_probs)
         predicted_classes = []
         confidence_scores = []
         
@@ -223,28 +231,31 @@ def predict_anomalies(csv_path, model_path="xgb_ids_model_v2.json"):
                 predicted_classes.append(class_id_to_label.get(pred_class, "UNKNOWN"))
 
         # Add predictions to the original dataframe
-        df_original['prediction'] = predicted_classes
-        df_original['confidence'] = confidence_scores
+        df_original['Prediction'] = predicted_classes
+        df_original['Confidence'] = confidence_scores
         
         # Now we can apply suspicious criteria
         suspicious_criteria = (
-            (df_original['SYN Flag Count'] > 100) |
-            (df_original['Flow Duration'] < 0.01) |
-            (df_original['Total Fwd Packets'] > 500)
+            (df_original['SYN Flag Count'] > 100) if 'SYN Flag Count' in df_original.columns else False |
+            (df_original['Flow Duration'] < 0.01) if 'Flow Duration' in df_original.columns else False |
+            (df_original['Total Fwd Packets'] > 500) if 'Total Fwd Packets' in df_original.columns else False
         )
         
         # Only mark as suspicious if not already detected as an attack
-        df_original.loc[suspicious_criteria & (df_original['prediction'] == 'BENIGN'), 'prediction'] = 'SUSPICIOUS'
+        df_original.loc[suspicious_criteria & (df_original['Prediction'] == 'BENIGN'), 'Prediction'] = 'SUSPICIOUS'
         
-        # Debug output
+        # Debug output - use only available columns
         print("\n[+] Detection Summary:")
-        print(df_original['prediction'].value_counts())
+        print(df_original['Prediction'].value_counts())
         
-        # Highlight suspicious flows
-        suspicious = df_original[df_original['prediction'].str.contains('DoS|SUSPICIOUS')]
+        # Highlight suspicious flows - check which columns exist first
+        available_columns = [col for col in ['flow_id', 'src_ip', 'dst_ip', 'prediction', 'confidence'] 
+                           if col in df_original.columns]
+        
+        suspicious = df_original[df_original['Prediction'].str.contains('DoS|SUSPICIOUS')]
         if not suspicious.empty:
             print("\n[!] Suspicious flows detected:")
-            print(suspicious[['flow_id', 'prediction', 'confidence']].to_string())
+            print(suspicious[available_columns].to_string())
         
         return df_original
 
@@ -361,7 +372,7 @@ def main():
             print(f"Available files: {os.listdir(OUTPUT_PATH)}")
             return
             
-        csv_path = os.path.join(OUTPUT_PATH, r"ten_malicious_rows.csv")
+        csv_path = os.path.join(OUTPUT_PATH, csv_files[0])
         print(f"[+] Analyzing flows from: {csv_path}")
         
         # Run CICFlowMeter
